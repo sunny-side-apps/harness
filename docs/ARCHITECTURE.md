@@ -6,7 +6,7 @@ Save My Ass is a cloud-hosted policy enforcement layer that gives AI agents fine
 
 **The core problem:** OAuth grants are too coarse. `gmail.modify` gives an agent full inbox access forever. Save My Ass lets users say "openclaw can read emails from my team, for 2 hours, nothing else."
 
-**How agents connect:** Save My Ass exposes an **MCP server** at `https://mcp.savemyass.com`. Each registered agent gets a unique key (`p_{key}`). The agent authenticates by passing the key in the `Authorization: Bearer p_{key}` header. Policy enforcement happens server-side on every tool call.
+**How agents connect:** Save My Ass exposes an **MCP server** at `https://mcp.savemyass.com`. Each registered agent gets a unique key. The agent authenticates by passing the key in the `Authorization: Bearer {key}` header. Policy enforcement happens server-side on every tool call.
 
 **How agents discover it:** Save My Ass ships as an **AgentSkill** — a SKILL.md distributed via agentskills.io that tells any compatible agent (Claude Code, OpenClaw, Cursor, OpenHands, etc.) how to connect to the MCP server. The AgentSkill is the distribution mechanism; the MCP server is the enforcement point.
 
@@ -26,7 +26,7 @@ The core service. Contains all business logic: policy enforcement, Gmail API cal
 
 A thin MCP protocol adapter. Translates MCP tool calls into API server calls. No direct database access, no business logic. Stateless and horizontally scalable.
 
-Authenticates agents via `Authorization: Bearer p_{key}` header on every request. Forwards requests to the API server using a shared service secret (`Authorization: Bearer {mcp-service-secret}`). The API server validates the service secret before processing any request — requests without it are rejected regardless of agent key.
+Authenticates agents via `Authorization: Bearer sma_{key}` header on every request. Forwards requests to the API server using a shared service secret (`Authorization: Bearer {mcp-service-secret}`). The API server validates the service secret before processing any request — requests without it are rejected regardless of agent key.
 
 **MCP tools exposed:**
 
@@ -47,7 +47,7 @@ All background jobs run through **pg-workflows** — a PostgreSQL-backed workflo
 - `classification-onboarding` — batch classifies the user's inbox on signup; checkpoints after each page so it resumes safely after crashes
 - `classification-incremental` — triggered per new email via Gmail push notification
 - `hil-approval` — pauses on `step.waitFor('approval-response')` until the user responds via Slack/Telegram, then executes or cancels the action; times out after 10 minutes
-- `expiry-sweep` — runs every 5 minutes to disable expired policies and clean up stale sessions
+- `expiry-sweep` — runs every minute to disable expired policies and clean up stale sessions
 
 ### 4. Policy Engine
 
@@ -74,7 +74,7 @@ React app. Read-only view of active policies, registered agents, and audit log. 
 
 ### 6. CLI (`sma`)
 
-Dual-purpose tool: full Google Workspace email client for humans and agents, with every command routed through the policy engine via the API server.
+Dual-purpose tool: Full CLI Gmail client for humans and agents, with every command routed through the policy engine via the API server. The UX is identical to https://github.com/steipete/gogcli but with a safety net.
 
 **Email operations:**
 ```bash
@@ -107,7 +107,7 @@ sma grant / revoke / grants
 sma audit / audit show <id>
 ```
 
-**For agents (via AgentSkill):** `sma` accepts `--agent-key p_{key}` to identify the calling agent. Every command is evaluated against that agent's policies before execution.
+**For agents (via AgentSkill):** `sma` accepts `--agent-key sma_{key}` to identify the calling agent. Every command is evaluated against that agent's policies before execution.
 
 ### 7. AgentSkill
 
@@ -123,19 +123,21 @@ Agents connect via two paths: MCP for hosted and MCP-native agents, CLI for shel
 
 ```
 Agent calls search_emails(query="from:team@company.com")
-  Authorization: Bearer p_{key}
+  Authorization: Bearer sma_{key}
 
-  1.  MCP server extracts p_{key} from Authorization header
+  1.  MCP server extracts sma_{key} from Authorization header
   2.  MCP server calls API server:
         POST /internal/gmail/search
         Authorization: Bearer {mcp-service-secret}
-        Body: { agentKey: p_{key}, tool: "search_emails", args: {...} }
+        Body: { agentKey: sma_{key}, tool: "search_emails", args: {...} }
   3.  API server validates mcp-service-secret — rejects if missing/invalid
-  4.  API server resolves p_{key} hash → (userId, agentId)
+  4.  API server resolves sma_{key} hash → (userId, agentId)
   5.  Check agent is registered and not revoked
   6.  Load active Cedar policies + session grants from PostgreSQL
         Failure: PostgreSQL unavailable → fail closed (deny, return 503)
-  7.  Policy engine early exit: is any read policy active for this agent?
+  7.  Policy engine early exit: is any no-action zone active for this agent/resource?
+        Active no-action zone → deny immediately
+      Then check: is any read policy active for this agent?
         No matching policy → deny immediately
   8.  [Optional] Append policy conditions to Gmail search query as filter optimization
   9.  Fetch fresh Gmail OAuth token from Clerk (never cached)
@@ -156,13 +158,13 @@ Agent calls search_emails(query="from:team@company.com")
 ### Read operations (CLI/AgentSkill path)
 
 ```
-Agent runs: sma gmail search "from:team@company.com" --agent-key p_{key}
+Agent runs: sma gmail search "from:team@company.com" --agent-key sma_{key}
   1. sma calls API server: POST /gmail/search
-     Authorization: Bearer p_{key}
+     Authorization: Bearer sma_{key}
   2-16. Same enforcement pipeline as MCP path
 ```
 
-Post-fetch filtering (step 13) is the primary enforcement point. Step 7 is a cheap early exit. Step 8 is an optional optimization. The agent never knows filtering happened — unauthorized emails are completely invisible.
+Post-fetch filtering (step 13) is the primary enforcement point. Step 7 is a cheap early exit and also enforces no-action zones. Step 8 is an optional optimization. The agent never knows filtering happened — unauthorized emails are completely invisible.
 
 **Pagination:** post-fetch filtering may reduce page sizes. The API server over-fetches up to 3 rounds to fill a page when results are filtered. Agents receive a `nextPageToken` only when more results exist in the filtered set — Gmail's total count is never exposed.
 
@@ -171,12 +173,13 @@ Post-fetch filtering (step 13) is the primary enforcement point. Step 7 is a che
 ```
 Agent calls draft_email / sma gmail send
   1-4. Same resolution and policy check as read path
-  5. Classify action risk tier:
+  5. If an active no-action zone matches, deny immediately
+  6. Classify action risk tier:
        draft, archive, label  → medium  (auto-allow, notify user)
        send, reply            → high    (create Gmail draft, label pending-approval)
        trash, delete          → critical (block + send approval request via Slack/Telegram)
-  6. Return result to agent
-  7. Write audit entry to PostgreSQL
+  7. Return result to agent
+  8. Write audit entry to PostgreSQL
 ```
 
 ---
@@ -297,7 +300,7 @@ agents (
   id          uuid primary key,
   user_id     uuid references users,
   name        text not null,
-  key_hash    text not null,      -- SHA-256 hash of p_{key}
+  key_hash    text not null,      -- SHA-256 hash of sma_{key}
   key_prefix  text not null,      -- p_{first8} for display only
   created_at  timestamptz,
   revoked_at  timestamptz
@@ -398,13 +401,14 @@ sma auth login    # opens browser → Clerk → saves session token locally
 **Included:**
 - User signup via Clerk + Google OAuth
 - Inbox classification on onboarding + incremental via push notifications
-- Agent registration + key generation (`p_{key}`)
+- Agent registration + key generation (`sma_{key}`)
 - Policy management via `sma` CLI — natural language and DSL
 - Policy compiler: NL → AgentGate DSL → Cedar
 - Policy engine: Cedar-based default-deny evaluation
 - Gmail operations via `sma` and MCP: search, read, draft, archive, trash
 - Post-fetch result filtering per active policies
 - Timeboxed access (`for 2h`, `during weekdays(9,17)`, `for session`)
+- No-action zones (`noaction ...`) to block all email interaction during a user-defined timespan
 - Draft-first model for send operations
 - Just-in-time approval via Slack or Telegram for high and critical actions
 - Audit log (PostgreSQL)

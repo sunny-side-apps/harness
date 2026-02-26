@@ -53,6 +53,10 @@ allow <agent> to [<operations>] on <service>.<resource>
 
 deny <agent> to [<operations>] on <service>.<resource>
   [where { <conditions> }]
+  [for <duration> | during <schedule> | until <timestamp> | for session]
+
+noaction <agent> on <service>.<resource>
+  [for <duration> | during <schedule> | until <timestamp> | for session]
 ```
 
 ---
@@ -66,6 +70,7 @@ deny <agent> to [<operations>] on <service>.<resource>
 | "openclaw can read work emails during business hours" | `allow "openclaw" to [read, list] on gmail.messages where { labels contains "sma/class/work" } during weekdays(9, 17)` |
 | "research-bot can read notifications but must ask before archiving" | `allow "research-bot" to [read, list, archive] on gmail.messages where { labels contains "sma/class/notification" } requires approval for [archive]` |
 | "let scheduler read my calendar emails until Friday" | `allow "scheduler" to [read, list] on gmail.messages where { labels contains "sma/class/calendar" } until "2026-02-28T17:00:00"` |
+| "don't let any agent touch my email for 2 hours" | `noaction * on gmail.messages for 2h` |
 
 ---
 
@@ -73,6 +78,7 @@ deny <agent> to [<operations>] on <service>.<resource>
 
 - **`*` is a wildcard** for agents and operations. `deny * to [*] on gmail.messages` blocks all agents from all Gmail operations.
 - **`deny` always wins over `allow`.** No ambiguity. If both match, deny takes precedence (Cedar `forbid` semantics).
+- **`noaction` is deny-all shorthand.** `noaction <agent> on gmail.messages` compiles to `deny <agent> to [*] on gmail.messages`.
 - **Operations are known verbs** (read, list, send, draft, archive, trash), not raw HTTP methods.
 - **Conditions use email attributes directly** (from, to, subject, labels, date). Referencing a nonexistent attribute is a compile-time error.
 - **Time is first-class.** `for 2h`, `during weekdays(9, 17)`, `until <timestamp>`, `for session`.
@@ -116,6 +122,7 @@ The compiler emits two artifacts:
 **2. Application sidecar** — evaluated by the PolicyEngine alongside Cedar:
 - `requires approval` — produces `pending_approval` outcome instead of permit/deny
 - `for session` — checked against active session state
+- `noaction ... for session` — deny-all while session-scoped no-action zone is active
 
 The PolicyEngine exposes a single interface regardless of which layer produces the decision:
 
@@ -126,6 +133,30 @@ type PolicyDecision =
   | { effect: 'pending_approval'; approvalId: string };
 
 PolicyEngine.evaluate(request: PolicyRequest): PolicyDecision
+```
+
+---
+
+## No-Action Zone Semantics
+
+`noaction` defines a temporary "hands off" window where the target agent cannot perform any operation on the target resource.
+
+For Gmail resources:
+- `noaction <agent> on gmail.messages` means deny `[read, list, draft, send, archive, trash]`
+- It applies to both read and write paths
+- It has strict precedence: if active, the request is denied before approval checks
+
+Example:
+
+```
+// User says:
+"for the next 90 minutes, no agent should interact with my email"
+
+// DSL:
+noaction * on gmail.messages for 90m
+
+// Compiles to (conceptually):
+deny * to [*] on gmail.messages for 90m
 ```
 
 ---

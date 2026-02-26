@@ -3,7 +3,7 @@
 
 **Save My Ass** is a secure proxy and policy enforcement layer that allows users to grant AI agents controlled, auditable, and selective access to their email and other services.
 
-It starts where OAuth stops. It acts as an invisible access control plane between AI agents and service providers (Gmail initially, expanding to Slack, GitHub, Google Calendar, Google Drive, Stripe), enforcing user-defined policies, delegation chains, cross-service flow rules, and just-in-time approvals.
+It starts where OAuth stops. It acts as an invisible access control plane between AI agents and service providers (Gmail initially, expanding to Slack, GitHub, Google Calendar, Google Drive, Stripe), enforcing user-defined policies, delegation chains, cross-service flow rules, no-action zones, and just-in-time approvals.
 
 Save My Ass ensures that AI agents can only see and act on resources they are explicitly allowed to access - and only for as long as they are allowed.
 
@@ -45,6 +45,7 @@ AI agents that access email and other APIs get full account access. There is no 
 - Prevent agents from seeing unauthorized emails
 - Operate statelessly without syncing or storing emails internally
 - Support timeboxed access that automatically expires
+- Support no-action zones that freeze agent email access during user-defined timespans
 - Enable safe agent actions via draft-first and approval workflows
 - Provide full auditability and transparency
 

@@ -71,19 +71,6 @@ When an agent requests a high or critical action, Save My Ass:
 
 **Future:** WhatsApp, Discord, Viber
 
-### Approval Workflow
-
-HIL approvals run as durable **pg-workflows** workflows. The workflow pauses at `step.waitFor('approval-response')` until the user responds via Slack or Telegram, then resumes and executes or cancels the action. Approval state, retries, and timeout are fully managed by the workflow engine — no custom approval table needed.
-
-```
-hil-approval workflow:
-  step.run('intercept')        → create Gmail draft (for send/reply) or hold action
-  step.run('notify')           → send approval request to Slack/Telegram
-  step.waitFor('approval',     → pause — wait for user response
-    timeout: 10 minutes)       → on timeout: delete draft, return ApprovalTimeout to agent
-  step.run('execute')          → execute or cancel based on response
-```
-
 ### Approval Responses
 
 The user responds with one of four options:
@@ -96,8 +83,6 @@ The user responds with one of four options:
 | `deny` | Blocks the request. Returns denial to agent. |
 
 `allow for <duration>` creates a real temporary policy — compiled, validated, and stored in PostgreSQL with `source: "approval"` and an auto-expiry. This means the user's approval response feeds back into the same policy pipeline used for manually created policies.
-
-The user triggers the workflow to resume by replying in Slack/Telegram. The approval channel integration calls `engine.triggerEvent({ eventName: 'approval-response', data: { decision, duration? } })`.
 
 ### Draft-First for Send Operations
 
@@ -121,7 +106,6 @@ sma agent set-approval research-bot --channel telegram
 ```
 
 If no approval channel is configured and an action requires approval, it is blocked with an explanation.
-
 ---
 
 ## Timeboxed Access
@@ -160,6 +144,18 @@ Reply with:
   expire       → let it expire now
 ```
 
+### No-Action Zones (Timeboxed Freeze)
+
+Users can define a temporary no-action zone to freeze agent email access for a timespan:
+
+```
+noaction * on gmail.messages for 2h
+```
+
+While active, no-action zones block all Gmail operations (`read`, `list`, `draft`, `send`, `archive`, `trash`) for matching agents. This applies before risk-tier checks and approval workflows, so an active freeze always wins.
+
+Use this when a user needs a guaranteed quiet window (travel, incident response, legal hold, or sensitive periods) where agents must not interact with email at all.
+
 ---
 
 ## Agent Identity
@@ -169,19 +165,14 @@ Agent identity is bound to a server-side key, not self-reported. Every registere
 ```bash
 sma agent register "openclaw"
 # → key: p_dGVhbS1vcGVuY2xhdw==
-# → MCP: set Authorization: Bearer p_dGVhbS1vcGVuY2xhdw== in agent config
-# → CLI: sma gmail search "..." --agent-key p_dGVhbS1vcGVuY2xhdw==
+# → use as MCP server URL or --agent-key flag
 ```
 
-Keys are transmitted exclusively in the `Authorization: Bearer` header — never in the URL path, query string, or request body. This prevents key exposure in server access logs, CDN logs, and browser history.
-
-Keys are stored as SHA-256 hashes in PostgreSQL. The raw key is shown once at registration and never stored. Revocation is immediate:
+Keys are stored hashed in PostgreSQL. The raw key is shown once at registration and never stored. Revocation is immediate:
 
 ```bash
 sma agent revoke "openclaw"   # all active sessions terminated instantly
 ```
-
-**Gmail OAuth token invariant:** The API server fetches Gmail OAuth tokens from Clerk fresh on every request. Tokens are never cached in application memory, never written to logs, and never stored. This is a hard architectural invariant — no in-process caching of OAuth tokens is permitted.
 
 Policy management commands (the control plane) never pass through the policy engine. An agent cannot lock a user out of their own policies. Emergency reset:
 
@@ -191,23 +182,9 @@ sma policy reset --emergency
 
 ---
 
-## Hardcoded System-Level Rules
-
-These rules are enforced at the API server layer and cannot be overridden by user policies:
-
-- **Agents cannot modify classification labels.** Any attempt to update or delete a Gmail label with a name starting with `sma/` is blocked unconditionally:
-  ```
-  deny * to [update, delete] on gmail.labels where { name startsWith "sma/" }
-  ```
-- **Audit log is append-only.** The API server's database role has INSERT + SELECT only on `audit_log` — no DELETE or UPDATE.
-- **OAuth tokens are never cached.** A hard architectural invariant — no in-process caching of Clerk-issued Gmail tokens.
-- **Policy control plane is not agent-accessible.** Policy creation, modification, and deletion endpoints accept only Clerk-authenticated user sessions — agent keys are rejected at the route level.
-
----
-
 ## Audit and Transparency
 
-Save My Ass maintains a complete audit log of every agent request, the policy decision, and the outcome. Logs are stored in PostgreSQL with append-only access controls.
+Save My Ass maintains a complete audit log of every agent request, the policy decision, and the outcome. Logs are stored in PostgreSQL.
 
 ### Audit Entry
 
