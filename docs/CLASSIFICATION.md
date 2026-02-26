@@ -96,39 +96,68 @@ const prompt = `
 
 ## Onboarding Batch Job
 
-When a user signs up, Save My Ass immediately starts classifying their inbox as a background job.
+When a user signs up, Save My Ass immediately starts a `classification-onboarding` workflow via **pg-workflows**. The workflow runs as a durable background job — it checkpoints after every page, resumes automatically after crashes, and retries failed LLM calls with exponential backoff.
 
-**Process:**
-1. Create a `classification_jobs` row with `status: 'running'`
-2. Fetch messages from Gmail API (paginated, oldest first)
-3. For each message: run deterministic rules → LLM fallback if no match
-4. Skip messages that already have a `sma/class/*` label (idempotent re-runs)
-5. Apply `sma/class/*` labels via Gmail API (batch label updates)
-6. Save the current Gmail page cursor to `last_page_token` after each batch
-7. On completion: set `status: 'completed'`, generate initial default policies (see below)
+```typescript
+// classification-onboarding workflow (simplified)
+workflow('classification-onboarding', async ({ step, input }) => {
+  let pageToken: string | undefined;
 
-**Idempotency:** If the job crashes, it can be safely restarted from `last_page_token`. Already-classified messages are skipped. LLM timeouts label the message `sma/class/unknown` and schedule a background retry.
+  do {
+    const page = await step.run(`fetch-page-${pageToken ?? 'first'}`, async () => {
+      return await gmail.listMessages({ userId: input.userId, pageToken });
+    });
 
-**Scope:** Full inbox history. Classification runs in the background — the user can start using Save My Ass immediately while it processes.
+    await step.run(`classify-page-${pageToken ?? 'first'}`, async () => {
+      for (const msg of page.messages) {
+        if (msg.hasLabel('sma/class/*')) continue;  // skip already classified
+        const label = classifyDeterministic(msg) ?? await classifyLLM(msg);
+        await gmail.applyLabel(msg.id, label ?? 'sma/class/unknown');
+      }
+    });
 
-**Progress:** Surfaced in the dashboard via the `classification_jobs` table. Users can see how many emails have been classified.
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+
+  await step.run('generate-default-policies', async () => {
+    await generateDefaultPolicies(input.userId);
+  });
+});
+```
+
+**Idempotency:** Each page is a named step — pg-workflows' exactly-once semantics skip already-completed steps on resume. Messages with an existing `sma/class/*` label are skipped. LLM timeouts fall back to `sma/class/unknown` and do not block the page.
+
+**Scope:** Full inbox history. The user can start using Save My Ass immediately while it processes.
+
+**Progress:** Query via `engine.checkProgress({ runId, resourceId: userId })` — surfaced in the dashboard as a percentage.
 
 ---
 
 ## Incremental Classification
 
-New emails are classified in real time using Gmail push notifications.
+New emails are classified in real time using Gmail push notifications. Each notification triggers a `classification-incremental` workflow via **pg-workflows**.
 
 ```bash
 sma gmail watch   # registers a Gmail push notification subscription
 ```
 
-When Gmail delivers a push notification for a new message, the API server:
-1. Fetches the new message
-2. Runs the classification pipeline
-3. Applies the appropriate `sma/class/*` labels
+When Gmail delivers a push notification for a new message, the API server starts a workflow:
 
-This keeps labels current without polling.
+```typescript
+workflow('classification-incremental', async ({ step, input }) => {
+  const msg = await step.run('fetch', async () =>
+    gmail.getMessage(input.messageId)
+  );
+
+  await step.run('classify', async () => {
+    if (msg.hasLabel('sma/class/*')) return;  // already classified
+    const label = classifyDeterministic(msg) ?? await classifyLLM(msg);
+    await gmail.applyLabel(msg.id, label ?? 'sma/class/unknown');
+  });
+});
+```
+
+Retries and LLM failures are handled automatically by pg-workflows with exponential backoff. This keeps labels current without polling.
 
 ---
 

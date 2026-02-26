@@ -39,7 +39,17 @@ Authenticates agents via `Authorization: Bearer p_{key}` header on every request
 | `trash_email` | `{ id: string }` | `{ status: 'executed' \| 'pending_approval' }` |
 | `list_labels` | — | `{ labels: string[] }` — only labels on accessible emails |
 
-### 3. Policy Engine
+### 3. Workflow Engine
+
+All background jobs run through **pg-workflows** — a PostgreSQL-backed workflow orchestration library that provides durable execution, exactly-once step semantics, automatic retries with exponential backoff, and built-in checkpointing. No external queue infrastructure required — PostgreSQL is the only dependency.
+
+**Workflows:**
+- `classification-onboarding` — batch classifies the user's inbox on signup; checkpoints after each page so it resumes safely after crashes
+- `classification-incremental` — triggered per new email via Gmail push notification
+- `hil-approval` — pauses on `step.waitFor('approval-response')` until the user responds via Slack/Telegram, then executes or cancels the action; times out after 10 minutes
+- `expiry-sweep` — runs every 5 minutes to disable expired policies and clean up stale sessions
+
+### 4. Policy Engine
 
 Cedar-based rule evaluation embedded in the API server. Loaded per agent request from PostgreSQL. Default-deny: if no rule matches, the request is blocked.
 
@@ -329,19 +339,6 @@ session_grants (
   created_at  timestamptz
 )
 
--- Pending HIL approvals
-pending_approvals (
-  id           uuid primary key,
-  agent_id     uuid references agents,
-  action       text,
-  resource_id  text,
-  draft_id     text,                       -- Gmail draft ID for send/reply
-  channel      text,                       -- 'slack' | 'telegram'
-  expires_at   timestamptz,               -- default: now + 10 minutes
-  resolved_at  timestamptz,
-  response     text                        -- 'allow_once' | 'allow' | 'allow_for' | 'deny'
-)
-
 -- Audit log (append-only — no DELETE or UPDATE permitted on this table)
 audit_log (
   id               uuid primary key,
@@ -351,22 +348,13 @@ audit_log (
   resource_id      text,
   decision         text,                   -- permit, deny, pending_approval
   matched_policies uuid[],
-  approval_id      uuid,                   -- references pending_approvals if applicable
+  workflow_run_id  text,                   -- pg-workflows run ID if HIL approval triggered
   outcome          text,                   -- executed, blocked, pending_approval
   created_at       timestamptz
 )
-
--- Classification job tracking (for idempotent onboarding batch job)
-classification_jobs (
-  id              uuid primary key,
-  user_id         uuid references users,
-  status          text,                    -- 'running' | 'completed' | 'failed'
-  last_page_token text,                    -- Gmail cursor for resume after failure
-  processed_count integer default 0,
-  started_at      timestamptz,
-  completed_at    timestamptz
-)
 ```
+
+Background job state (classification jobs, HIL approval state, expiry sweeps) is managed by **pg-workflows** in its own `workflow_runs` table. No custom job tables are needed.
 
 ---
 
@@ -471,12 +459,17 @@ savemyass/
 │   │       │   ├── clarifier.ts      # Ambiguity detection
 │   │       │   └── summary.ts        # DSL → human-readable summary
 │   │       ├── timebox/
-│   │       │   ├── grants.ts         # Grant creation + parsing
-│   │       │   └── expiry.ts         # Expiry checks + cleanup sweep
+│   │       │   └── grants.ts         # Grant creation + parsing
 │   │       ├── approval/
-│   │       │   ├── broker.ts         # Approval request dispatch
+│   │       │   ├── broker.ts         # Approval notification dispatch
 │   │       │   ├── slack.ts          # Slack integration
 │   │       │   └── telegram.ts       # Telegram integration
+│   │       ├── workflows/
+│   │       │   ├── engine.ts         # WorkflowEngine init + pg-boss setup
+│   │       │   ├── classification-onboarding.ts  # Batch inbox classification
+│   │       │   ├── classification-incremental.ts # Per-email push classification
+│   │       │   ├── hil-approval.ts               # HIL approval (step.waitFor)
+│   │       │   └── expiry-sweep.ts               # Periodic policy + session expiry
 │   │       └── db/
 │   │           └── schema.ts         # PostgreSQL schema
 │   ├── mcp/                          # MCP adapter (Bun + Hono)
@@ -496,6 +489,8 @@ savemyass/
 - `@cedar-policy/cedar-wasm` — policy evaluation runtime
 - `@anthropic-ai/sdk` — LLM for NL → DSL translation and classification
 - `@clerk/backend` — user auth + Gmail token retrieval
+- `pg-workflows` — durable background workflow orchestration (classification, HIL approval, expiry sweep)
+- `pg-boss` — PostgreSQL job queue (peer dependency of pg-workflows)
 - `hono` — HTTP framework
 - `commander` — CLI framework
 - `zod` — runtime validation

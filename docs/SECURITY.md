@@ -71,6 +71,19 @@ When an agent requests a high or critical action, Save My Ass:
 
 **Future:** WhatsApp, Discord, Viber
 
+### Approval Workflow
+
+HIL approvals run as durable **pg-workflows** workflows. The workflow pauses at `step.waitFor('approval-response')` until the user responds via Slack or Telegram, then resumes and executes or cancels the action. Approval state, retries, and timeout are fully managed by the workflow engine — no custom approval table needed.
+
+```
+hil-approval workflow:
+  step.run('intercept')        → create Gmail draft (for send/reply) or hold action
+  step.run('notify')           → send approval request to Slack/Telegram
+  step.waitFor('approval',     → pause — wait for user response
+    timeout: 10 minutes)       → on timeout: delete draft, return ApprovalTimeout to agent
+  step.run('execute')          → execute or cancel based on response
+```
+
 ### Approval Responses
 
 The user responds with one of four options:
@@ -83,6 +96,8 @@ The user responds with one of four options:
 | `deny` | Blocks the request. Returns denial to agent. |
 
 `allow for <duration>` creates a real temporary policy — compiled, validated, and stored in PostgreSQL with `source: "approval"` and an auto-expiry. This means the user's approval response feeds back into the same policy pipeline used for manually created policies.
+
+The user triggers the workflow to resume by replying in Slack/Telegram. The approval channel integration calls `engine.triggerEvent({ eventName: 'approval-response', data: { decision, duration? } })`.
 
 ### Draft-First for Send Operations
 
