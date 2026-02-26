@@ -340,7 +340,7 @@ Validation catches:
 
 ## Coming Soon
 
-**Delegation chains** — multi-agent orchestration where permissions narrow at every hop:
+**Delegation chains** _(not supported in MVP)_ — multi-agent orchestration where permissions narrow at every hop:
 ```
 delegate agent "openclaw" to agent "summarizer" {
   allow [read] on gmail.messages where { labels contains "sma/class/work" }

@@ -6,7 +6,7 @@ Save My Ass is a cloud-hosted policy enforcement layer that gives AI agents fine
 
 **The core problem:** OAuth grants are too coarse. `gmail.modify` gives an agent full inbox access forever. Save My Ass lets users say "openclaw can read emails from my team, for 2 hours, nothing else."
 
-**How agents connect:** Save My Ass exposes an **MCP server** at `https://mcp.savemyass.com/p_{key}`. Each registered agent gets a unique key. The agent connects to the MCP server and uses semantic tools (`search_emails`, `read_email`, `draft_email`) instead of the Gmail API directly. Policy enforcement happens server-side on every tool call.
+**How agents connect:** Save My Ass exposes an **MCP server** at `https://mcp.savemyass.com`. Each registered agent gets a unique key (`p_{key}`). The agent authenticates by passing the key in the `Authorization: Bearer p_{key}` header. Policy enforcement happens server-side on every tool call.
 
 **How agents discover it:** Save My Ass ships as an **AgentSkill** — a SKILL.md distributed via agentskills.io that tells any compatible agent (Claude Code, OpenClaw, Cursor, OpenHands, etc.) how to connect to the MCP server. The AgentSkill is the distribution mechanism; the MCP server is the enforcement point.
 
@@ -26,13 +26,18 @@ The core service. Contains all business logic: policy enforcement, Gmail API cal
 
 A thin MCP protocol adapter. Translates MCP tool calls into API server calls. No direct database access, no business logic. Stateless and horizontally scalable.
 
-MCP tools exposed:
-- `search_emails(query, filters)`
-- `read_email(id)`
-- `draft_email(to, subject, body)`
-- `archive_email(id)`
-- `trash_email(id)`
-- `list_labels()`
+Authenticates agents via `Authorization: Bearer p_{key}` header on every request. Forwards requests to the API server using a shared service secret (`Authorization: Bearer {mcp-service-secret}`). The API server validates the service secret before processing any request — requests without it are rejected regardless of agent key.
+
+**MCP tools exposed:**
+
+| Tool | Input | Output |
+|---|---|---|
+| `search_emails` | `{ query: string, limit?: number (1–100), pageToken?: string }` | `{ messages: GmailMessage[], nextPageToken?: string }` |
+| `read_email` | `{ id: string }` | `{ message: GmailMessage }` |
+| `draft_email` | `{ to: string[], subject: string, body: string, cc?: string[], replyTo?: string }` | `{ draftId: string, status: 'created' \| 'pending_approval' }` |
+| `archive_email` | `{ id: string }` | `{ status: 'executed' \| 'pending_approval' }` |
+| `trash_email` | `{ id: string }` | `{ status: 'executed' \| 'pending_approval' }` |
+| `list_labels` | — | `{ labels: string[] }` — only labels on accessible emails |
 
 ### 3. Policy Engine
 
@@ -108,31 +113,48 @@ Agents connect via two paths: MCP for hosted and MCP-native agents, CLI for shel
 
 ```
 Agent calls search_emails(query="from:team@company.com")
-  1. MCP server resolves p_{key} → API server
-  2. API server resolves p_{key} → (userId, agentId)
-  3. Load agent's active policies from PostgreSQL
-  4. Policy engine checks if the agent is allowed to perform this action at all
-     (no gmail.read policy → block immediately)
-  5. [Optional] If a policy condition maps directly to a Gmail search filter,
-     append it to the query as an optimization
-  6. Fetch Gmail OAuth token from Clerk
-  7. Forward request to Gmail API
-  8. Gmail returns full results
-  9. Extract attributes from each result (from, to, subject, labels, date)
-  10. Policy engine evaluates each item — unauthorized items stripped
-  11. Return filtered results to agent
-  12. Write audit entry to PostgreSQL
+  Authorization: Bearer p_{key}
+
+  1.  MCP server extracts p_{key} from Authorization header
+  2.  MCP server calls API server:
+        POST /internal/gmail/search
+        Authorization: Bearer {mcp-service-secret}
+        Body: { agentKey: p_{key}, tool: "search_emails", args: {...} }
+  3.  API server validates mcp-service-secret — rejects if missing/invalid
+  4.  API server resolves p_{key} hash → (userId, agentId)
+  5.  Check agent is registered and not revoked
+  6.  Load active Cedar policies + session grants from PostgreSQL
+        Failure: PostgreSQL unavailable → fail closed (deny, return 503)
+  7.  Policy engine early exit: is any read policy active for this agent?
+        No matching policy → deny immediately
+  8.  [Optional] Append policy conditions to Gmail search query as filter optimization
+  9.  Fetch fresh Gmail OAuth token from Clerk (never cached)
+        Failure: Clerk unavailable → fail closed (deny, return 503)
+        Failure: token revoked → deny, return 401
+  10. Forward request to Gmail API
+        Failure: Gmail unavailable → return 503, do not retry automatically
+        Failure: Gmail 429 → return 429 with Retry-After to agent
+  11. Gmail returns results (paginated)
+  12. Extract attributes from each result (from, to, subject, labels, date)
+  13. Policy engine evaluates each result — unauthorized items stripped
+        Failure: Cedar throws → fail closed (deny entire response, log error)
+  14. If filtered count < requested limit, fetch next page and repeat (max 3 rounds)
+  15. Return filtered results to agent
+  16. Write audit entry to PostgreSQL (INSERT only — append-only)
 ```
 
 ### Read operations (CLI/AgentSkill path)
 
 ```
 Agent runs: sma gmail search "from:team@company.com" --agent-key p_{key}
-  1. sma calls API server with p_{key}
-  2-12. Same enforcement pipeline as MCP path
+  1. sma calls API server: POST /gmail/search
+     Authorization: Bearer p_{key}
+  2-16. Same enforcement pipeline as MCP path
 ```
 
-Post-fetch filtering (step 10) is the primary enforcement point. Step 4 is a cheap early exit. Step 5 is an optional optimization. The agent never knows filtering happened — unauthorized emails are completely invisible.
+Post-fetch filtering (step 13) is the primary enforcement point. Step 7 is a cheap early exit. Step 8 is an optional optimization. The agent never knows filtering happened — unauthorized emails are completely invisible.
+
+**Pagination:** post-fetch filtering may reduce page sizes. The API server over-fetches up to 3 rounds to fill a page when results are filtered. Agents receive a `nextPageToken` only when more results exist in the filtered set — Gmail's total count is never exposed.
 
 ### Write operations (both paths)
 
@@ -157,21 +179,27 @@ Handled entirely by Clerk. Users sign up with Google — Clerk runs the OAuth fl
 
 ### Agent identity
 
-Each registered agent gets a unique key (`p_{base64_random}`). The key is the full identifier — it encodes both the user and the agent. There is no separate user ID in the request path.
+Each registered agent gets a unique key (`p_{base64_random}`). The key is the full identifier — it encodes both the user and the agent. It is transmitted exclusively in the `Authorization` header — never in the URL path, query string, or request body.
 
 ```bash
 sma agent register "openclaw"
-# Returns: https://mcp.savemyass.com/p_dGVhbS1vcGVuY2xhdw==
-# Use as MCP server URL, or pass as --agent-key to sma commands
+# Returns the key: p_dGVhbS1vcGVuY2xhdw==
+# MCP: set Authorization: Bearer p_dGVhbS1vcGVuY2xhdw== in agent config
+# CLI: sma gmail search "..." --agent-key p_dGVhbS1vcGVuY2xhdw==
 ```
 
-On every request, the API server looks up the key in PostgreSQL. If the key does not exist, is revoked, or the account is inactive — deny immediately, before any policy evaluation.
+On every request, the API server hashes the key and looks it up in PostgreSQL. If the key does not exist, is revoked, or the account is inactive — deny immediately, before any policy evaluation.
 
 **Key security:**
-- Generated with `crypto.randomBytes`, base64url-encoded
-- Transmitted over HTTPS only
-- Stored hashed in PostgreSQL
-- Revocation is immediate — `sma agent revoke "openclaw"` invalidates all sessions instantly
+- Generated with `crypto.randomBytes(32)`, base64url-encoded
+- Transmitted only in the `Authorization` header (excluded from standard access logs)
+- Stored as a SHA-256 hash in PostgreSQL — the raw key is shown once at registration and never stored
+- Revocation is immediate: `sma agent revoke "openclaw"` marks the key revoked in PostgreSQL; all subsequent requests are denied within one request cycle
+
+**Gmail OAuth tokens:**
+- Fetched fresh from Clerk on every request — never cached in application memory
+- Used within the request scope only — eligible for garbage collection immediately after the Gmail API call completes
+- Never written to logs, audit entries, or any persistent storage
 
 Agent identity is bound to the key server-side. Agents cannot claim to be a different agent.
 
@@ -237,6 +265,11 @@ If any phase fails, the active policy set is untouched.
 
 Cedar-based evaluation embedded in the API server. Loaded per agent request. Default-deny: if no rule matches, the action is blocked. Policy set updates are atomic — in-flight requests finish with the old set, the next request uses the new one.
 
+**Failure modes:**
+- Cedar evaluation throws → fail closed: deny the request, log the full error with context, alert on-call
+- Policy set fails to load from PostgreSQL → fail closed: deny all requests, serve 503
+- Corrupted policy detected on load → keep the previous valid policy set in memory; do not swap until a new valid set is available
+
 ---
 
 ## Data Model
@@ -254,10 +287,19 @@ agents (
   id          uuid primary key,
   user_id     uuid references users,
   name        text not null,
-  key_hash    text not null,      -- hashed p_{key}
-  key_prefix  text not null,      -- p_{first8} for display
+  key_hash    text not null,      -- SHA-256 hash of p_{key}
+  key_prefix  text not null,      -- p_{first8} for display only
   created_at  timestamptz,
   revoked_at  timestamptz
+)
+
+-- Active MCP sessions (used for 'for session' grant tracking)
+active_sessions (
+  id          uuid primary key,
+  agent_id    uuid references agents,
+  started_at  timestamptz,
+  last_seen   timestamptz,
+  ended_at    timestamptz          -- null while active
 )
 
 -- Compiled policies
@@ -271,20 +313,58 @@ policies (
   enabled          boolean default true,
   expires_at       timestamptz,
   created_at       timestamptz,
-  version          integer
+  version          integer,
+  source           text default 'manual',  -- 'manual' | 'approval'
+  auto_expire      boolean default false   -- true for approval-generated policies
 )
 
--- Audit log
+-- Session grants (for 'allow once' and 'allow' HIL approval responses)
+session_grants (
+  id          uuid primary key,
+  agent_id    uuid references agents,
+  session_id  uuid references active_sessions,
+  action      text,                        -- e.g. gmail:messages:archive
+  grant_type  text,                        -- 'once' | 'session'
+  consumed    boolean default false,       -- true after 'once' grant is used
+  created_at  timestamptz
+)
+
+-- Pending HIL approvals
+pending_approvals (
+  id           uuid primary key,
+  agent_id     uuid references agents,
+  action       text,
+  resource_id  text,
+  draft_id     text,                       -- Gmail draft ID for send/reply
+  channel      text,                       -- 'slack' | 'telegram'
+  expires_at   timestamptz,               -- default: now + 10 minutes
+  resolved_at  timestamptz,
+  response     text                        -- 'allow_once' | 'allow' | 'allow_for' | 'deny'
+)
+
+-- Audit log (append-only — no DELETE or UPDATE permitted on this table)
 audit_log (
   id               uuid primary key,
   agent_id         uuid references agents,
-  action           text,           -- read, search, draft, send, archive
-  resource_type    text,           -- gmail.message
+  action           text,                   -- gmail:messages:read, etc.
+  resource_type    text,                   -- GmailMessage
   resource_id      text,
-  decision         text,           -- permit, deny
+  decision         text,                   -- permit, deny, pending_approval
   matched_policies uuid[],
-  outcome          text,           -- executed, blocked, pending_approval
+  approval_id      uuid,                   -- references pending_approvals if applicable
+  outcome          text,                   -- executed, blocked, pending_approval
   created_at       timestamptz
+)
+
+-- Classification job tracking (for idempotent onboarding batch job)
+classification_jobs (
+  id              uuid primary key,
+  user_id         uuid references users,
+  status          text,                    -- 'running' | 'completed' | 'failed'
+  last_page_token text,                    -- Gmail cursor for resume after failure
+  processed_count integer default 0,
+  started_at      timestamptz,
+  completed_at    timestamptz
 )
 ```
 
@@ -301,12 +381,27 @@ sma CLI                               ─┘            │
 
 All services run on Fly.io. The API server contains all business logic — the MCP server and CLI are thin clients. Adding a new interface (REST, webhook, etc.) is a thin adapter on top of the same API.
 
+**Service-to-service authentication:** The MCP server authenticates to the API server via a shared `mcp-service-secret` in the `Authorization` header of every internal request. The API server rejects any request not bearing this secret, regardless of agent key validity.
+
 **CLI distribution:** `sma` is distributed as a standalone binary compiled with Bun. Users authenticate once:
 ```bash
 sma auth login    # opens browser → Clerk → saves session token locally
 ```
 
 **Scaling:** The MCP server and API server are stateless. Both scale horizontally on Fly.io. Policy sets are loaded from PostgreSQL per request.
+
+**Failure modes:**
+
+| Component failure | Behavior |
+|---|---|
+| PostgreSQL unavailable | Fail closed — deny all requests, return 503 |
+| Clerk unavailable | Fail closed — deny all requests, return 503 |
+| Clerk token revoked | Deny request, return 401 |
+| Cedar evaluation throws | Fail closed — deny request, log error, alert |
+| Gmail API unavailable | Return 503 to agent — do not retry automatically |
+| Gmail API rate limit (429) | Return 429 with Retry-After to agent |
+| Approval channel unavailable | Retry 3× over 5 min — if all fail, block action with error |
+| Classification LLM unavailable | Label as `sma/class/unknown`, retry in background |
 
 ---
 

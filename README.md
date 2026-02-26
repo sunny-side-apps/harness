@@ -53,10 +53,12 @@ AI agents that access email and other APIs get full account access. There is no 
 - Default-deny: if no policy matches, the action is blocked
 - Draft-first model for outgoing email
 - Just-in-time approval for sensitive actions
-- Rest time
 - Live audit feed of agent activity
 - No internal storage of email bodies (Gmail remains source of truth)
-- Cross-service flow isolation: data from one service can be blocked from leaking to another
+
+### Coming soon
+
+- Cross-service flow isolation: when an agent reads sensitive data from one service, block it from posting to another (e.g. medical emails → Slack)
 
 ### User focus
 

@@ -99,14 +99,19 @@ const prompt = `
 When a user signs up, Save My Ass immediately starts classifying their inbox as a background job.
 
 **Process:**
-1. Fetch all messages from Gmail API (paginated, oldest first)
-2. For each message: run deterministic rules → LLM fallback if no match
-3. Apply `sma/class/*` labels via Gmail API (batch label updates)
-4. On completion: generate initial default policies (see below)
+1. Create a `classification_jobs` row with `status: 'running'`
+2. Fetch messages from Gmail API (paginated, oldest first)
+3. For each message: run deterministic rules → LLM fallback if no match
+4. Skip messages that already have a `sma/class/*` label (idempotent re-runs)
+5. Apply `sma/class/*` labels via Gmail API (batch label updates)
+6. Save the current Gmail page cursor to `last_page_token` after each batch
+7. On completion: set `status: 'completed'`, generate initial default policies (see below)
+
+**Idempotency:** If the job crashes, it can be safely restarted from `last_page_token`. Already-classified messages are skipped. LLM timeouts label the message `sma/class/unknown` and schedule a background retry.
 
 **Scope:** Full inbox history. Classification runs in the background — the user can start using Save My Ass immediately while it processes.
 
-**Progress:** Surfaced in the dashboard. Users can see how many emails have been classified.
+**Progress:** Surfaced in the dashboard via the `classification_jobs` table. Users can see how many emails have been classified.
 
 ---
 
