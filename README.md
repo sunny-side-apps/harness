@@ -46,6 +46,7 @@ AI agents that access email and other APIs get full account access. There is no 
 - Operate statelessly without syncing or storing emails internally
 - Support timeboxed access that automatically expires
 - Support no-action zones that freeze agent email access during user-defined timespans
+- Support no-memory scopes, where certain email categories while accessible from the agent, they are handled in an isolated session not stored in memory.
 - Enable safe agent actions via draft-first and approval workflows
 - Provide full auditability and transparency
 
