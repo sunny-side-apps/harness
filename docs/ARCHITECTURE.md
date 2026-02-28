@@ -10,7 +10,9 @@ Save My Ass is a cloud-hosted policy enforcement layer that gives AI agents fine
 
 **How agents discover it:** Save My Ass ships as an **AgentSkill** — a SKILL.md distributed via agentskills.io that tells any compatible agent (Claude Code, OpenClaw, Cursor, OpenHands, etc.) how to connect to the MCP server. The AgentSkill is the distribution mechanism; the MCP server is the enforcement point.
 
-**How users manage it:** Via a **CLI** (`sma`) for policy creation, agent registration, grants, and email management. A read-only **React dashboard** shows active policies and audit history.
+**How users manage it:** 
+    1. Via a dedicated web interface with standard auth powered by Clerk.com (for most users).
+    2. Via a CLI tool using an API key (issued on the web interface) - that is for tech-savvy users who want to provide the CLI to their personal agent of choice (e.g. Claude) and manage the service through that.
 
 **Stack:** TypeScript + Bun + Hono, PostgreSQL, Fly.io, Clerk (auth + Google OAuth).
 
