@@ -2,21 +2,21 @@
 
 ## Decisions Log
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| Monorepo | Single package with path aliases | Split into workspaces later when boundaries stabilize |
-| Database | Docker Compose (PostgreSQL) | Easy onboarding, reproducible |
-| Migrations | Drizzle ORM | Type-safe schema-as-code, excellent Bun support |
-| Workflows | pg-workflows (npm) | Confirmed Bun-compatible, exactly-once semantics, pg-boss backed |
-| CLI framework | Commander | As specced |
-| Cedar | @cedar-policy/cedar-wasm | Test with Bun first; fallback to tempire/cedar-wasm-js fork if ESM issue (#1226) blocks us |
-| LLM | Claude Haiku via @anthropic-ai/sdk | Fast and cheap for both NL translation and classification |
-| MCP SDK | @modelcontextprotocol/sdk | Official TypeScript SDK |
-| HIL approvals | Mock/stub first | Build the broker interface, stub with CLI prompt/webhook for dev |
-| Dashboard | Deferred | Build last, after all backend services are functional |
-| CI/CD | Deferred | Focus on application code first |
-| Config | dotenv + Zod validation | .env files with Zod schema validation at startup |
-| First slice | Policy engine + CLI | Core value prop, minimal external dependencies |
+| Decision      | Choice                             | Rationale                                                                                  |
+| ------------- | ---------------------------------- | ------------------------------------------------------------------------------------------ |
+| Monorepo      | Single package with path aliases   | Split into workspaces later when boundaries stabilize                                      |
+| Database      | Docker Compose (PostgreSQL)        | Easy onboarding, reproducible                                                              |
+| Migrations    | Drizzle ORM                        | Type-safe schema-as-code, excellent Bun support                                            |
+| Workflows     | pg-workflows (npm)                 | Confirmed Bun-compatible, exactly-once semantics, pg-boss backed                           |
+| CLI framework | Commander                          | As specced                                                                                 |
+| Cedar         | @cedar-policy/cedar-wasm           | Test with Bun first; fallback to tempire/cedar-wasm-js fork if ESM issue (#1226) blocks us |
+| LLM           | Claude Haiku via @anthropic-ai/sdk | Fast and cheap for both NL translation and classification                                  |
+| MCP SDK       | @modelcontextprotocol/sdk          | Official TypeScript SDK                                                                    |
+| HIL approvals | Mock/stub first                    | Build the broker interface, stub with CLI prompt/webhook for dev                           |
+| Dashboard     | Deferred                           | Build last, after all backend services are functional                                      |
+| CI/CD         | Deferred                           | Focus on application code first                                                            |
+| Config        | dotenv + Zod validation            | .env files with Zod schema validation at startup                                           |
+| First slice   | Policy engine + CLI                | Core value prop, minimal external dependencies                                             |
 
 ---
 
@@ -94,11 +94,6 @@ savemyass/
 ├── packages/
 │   └── skill/
 │       └── SKILL.md
-├── tests/
-│   ├── compiler/
-│   ├── runtime/
-│   ├── classification/
-│   └── integration/
 └── docs/
 ```
 
@@ -154,6 +149,7 @@ volumes:
 ### 0.5 Database Schema (Drizzle)
 
 Implement all tables from ARCHITECTURE.md data model:
+
 - `users` — mirrors Clerk
 - `agents` — registered agents with key_hash
 - `active_sessions` — MCP session tracking
@@ -164,6 +160,7 @@ Implement all tables from ARCHITECTURE.md data model:
 ### 0.6 Cedar WASM Compatibility Spike
 
 Before proceeding, verify @cedar-policy/cedar-wasm works with Bun:
+
 1. Install the package
 2. Write a minimal test: create a PolicySet, validate against a schema, evaluate a request
 3. If ESM import fails, try the `/nodejs` subpath
@@ -186,12 +183,13 @@ Hand-written recursive descent parser (the DSL is small enough; no need for a pa
 **Output:** Unresolved AST
 
 AST node types:
+
 ```typescript
 type PolicyAST = {
-  kind: 'allow' | 'deny' | 'noaction';
-  agent: string | '*';              // agent name or wildcard
-  operations: string[] | ['*'];     // read, list, send, etc.
-  resource: { service: string; type: string };  // gmail.messages
+  kind: "allow" | "deny" | "noaction";
+  agent: string | "*"; // agent name or wildcard
+  operations: string[] | ["*"]; // read, list, send, etc.
+  resource: { service: string; type: string }; // gmail.messages
   conditions?: Condition[];
   timeBound?: TimeBound;
   requiresApproval?: { operations: string[] };
@@ -204,13 +202,14 @@ type Condition = {
 };
 
 type TimeBound =
-  | { kind: 'duration'; seconds: number }        // for 2h
-  | { kind: 'until'; timestamp: string }          // until "2026-03-01"
-  | { kind: 'schedule'; schedule: Schedule }      // during weekdays(9,17)
-  | { kind: 'session' };                          // for session
+  | { kind: "duration"; seconds: number } // for 2h
+  | { kind: "until"; timestamp: string } // until "2026-03-01"
+  | { kind: "schedule"; schedule: Schedule } // during weekdays(9,17)
+  | { kind: "session" }; // for session
 ```
 
 **Test cases:**
+
 - All examples from DSL.md
 - Edge cases: wildcard agents, wildcard operations, multiple conditions, combined time+conditions
 - Error cases: unknown keywords, malformed durations, unclosed braces
@@ -232,14 +231,14 @@ Links AST references to the known Gmail resource model.
 
 Validates that condition operators are valid for the attribute type:
 
-| Attribute | Type | Valid operators |
-|---|---|---|
-| `from` | String | `==`, `!=`, `like`, `startsWith`, `endsWith` |
-| `to` | Set\<String\> | `contains`, `containsAny`, `containsAll`, `isEmpty` |
-| `subject` | String | `==`, `!=`, `like`, `startsWith`, `endsWith` |
-| `labels` | Set\<String\> | `contains`, `containsAny`, `containsAll`, `isEmpty` |
-| `date` | Long | `==`, `!=`, `>`, `<`, `>=`, `<=` |
-| `threadId` | String | `==`, `!=` |
+| Attribute  | Type          | Valid operators                                     |
+| ---------- | ------------- | --------------------------------------------------- |
+| `from`     | String        | `==`, `!=`, `like`, `startsWith`, `endsWith`        |
+| `to`       | Set\<String\> | `contains`, `containsAny`, `containsAll`, `isEmpty` |
+| `subject`  | String        | `==`, `!=`, `like`, `startsWith`, `endsWith`        |
+| `labels`   | Set\<String\> | `contains`, `containsAny`, `containsAll`, `isEmpty` |
+| `date`     | Long          | `==`, `!=`, `>`, `<`, `>=`, `<=`                    |
+| `threadId` | String        | `==`, `!=`                                          |
 
 Errors are rich and actionable: "Operator '>' is not valid for attribute 'from' (type String). Did you mean 'like'?"
 
@@ -258,6 +257,7 @@ Errors block activation. Warnings require acknowledgment (in CLI: prompt user).
 Transforms resolved+validated AST into Cedar policy strings.
 
 Mapping:
+
 - `allow` → `permit(...) when { ... }`
 - `deny` → `forbid(...) when { ... }`
 - `noaction` → `forbid(...)` with all actions
@@ -269,6 +269,7 @@ Mapping:
 - `until <timestamp>` → `context.now < <unix_timestamp>`
 
 Also extracts the **application sidecar**:
+
 - `requires approval for [archive]` → `{ requiresApproval: ["gmail:messages:archive"] }`
 - `for session` → `{ sessionScoped: true }`
 
@@ -282,12 +283,12 @@ Single entry point that runs all phases in sequence:
 
 ```typescript
 function compile(dsl: string, existingPolicies: Policy[]): CompileResult {
-  const ast = parse(dsl);           // Phase 1: Parse
-  const resolved = resolve(ast);     // Phase 2: Resolve
-  typecheck(resolved);               // Phase 3: Type-check
-  checkConflicts(resolved, existingPolicies);  // Phase 4: Conflicts
-  const { cedar, sidecar } = emit(resolved);   // Phase 5: Emit
-  validateCedar(cedar);              // Phase 6: Cedar validation
+  const ast = parse(dsl); // Phase 1: Parse
+  const resolved = resolve(ast); // Phase 2: Resolve
+  typecheck(resolved); // Phase 3: Type-check
+  checkConflicts(resolved, existingPolicies); // Phase 4: Conflicts
+  const { cedar, sidecar } = emit(resolved); // Phase 5: Emit
+  validateCedar(cedar); // Phase 6: Cedar validation
   return { cedar, sidecar, ast: resolved };
 }
 ```
@@ -305,6 +306,7 @@ If any phase throws, the active policy set is untouched.
 ### 2.1 Policy Engine (src/runtime/policy-engine.ts)
 
 Wraps `@cedar-policy/cedar-wasm`:
+
 - Load Cedar schema once at startup
 - Load policy set from PostgreSQL per agent request
 - Atomic swap: in-flight requests finish with old set, next request gets new set
@@ -345,6 +347,7 @@ Uses Luxon for timezone-aware computation.
 ### 2.4 Post-Fetch Filter (src/runtime/filter.ts)
 
 For read operations:
+
 1. Extract attributes from each Gmail message (from, to, subject, labels, date)
 2. Evaluate each message against the policy engine
 3. Strip unauthorized messages — they become invisible
@@ -374,6 +377,7 @@ sma audit / audit show <id>
 ### 3.2 Policy Management Commands
 
 `sma policy add "<natural language or DSL>"`:
+
 1. Detect if input is NL or DSL (heuristic: DSL starts with `allow`/`deny`/`noaction`)
 2. If NL → call NL translator (Phase 5) → show DSL for confirmation
 3. Compile DSL → Cedar via compiler (Phase 1)
@@ -388,6 +392,7 @@ sma audit / audit show <id>
 ### 3.3 Agent Management Commands
 
 `sma agent register "<name>"`:
+
 1. Generate key: `crypto.randomBytes(32)` → base64url → prefix with `sma_`
 2. Hash with SHA-256, store hash + prefix in PostgreSQL
 3. Display raw key once — never stored
@@ -398,6 +403,7 @@ sma audit / audit show <id>
 ### 3.4 Gmail Commands
 
 All Gmail commands call the API server (not Gmail directly):
+
 - `sma gmail search` → `POST /gmail/search`
 - `sma gmail read <id>` → `POST /gmail/read`
 - etc.
@@ -415,6 +421,7 @@ Human user commands (no `--agent-key`) authenticate via Clerk session token from
 ### 4.1 Server Setup (src/api/server.ts)
 
 Hono app with:
+
 - Health check endpoint
 - Authentication middleware (two paths):
   - Agent key auth: `Authorization: Bearer sma_{key}` → resolve to (userId, agentId)
@@ -452,6 +459,7 @@ All Gmail routes follow the request flow from ARCHITECTURE.md:
 - `GET /gmail/labels` — list accessible labels
 
 Internal routes (MCP→API, same logic but service-secret auth):
+
 - `POST /internal/gmail/search`
 - `POST /internal/gmail/read`
 - etc.
@@ -476,6 +484,7 @@ Internal routes (MCP→API, same logic but service-secret auth):
 ### 5.1 NL Translator (src/nl/translator.ts)
 
 Calls Anthropic API with a structured prompt:
+
 - System prompt defines the DSL grammar, all valid operations, attributes, time constructs
 - User message is the natural language input
 - Output is a single DSL statement
@@ -484,6 +493,7 @@ Calls Anthropic API with a structured prompt:
 ### 5.2 Ambiguity Detector (src/nl/clarifier.ts)
 
 When the translator returns low confidence or multiple interpretations:
+
 - Surface clarifying questions to the user
 - Re-translate with the clarified input
 - Examples: "team emails" → which team domain? "for a while" → how long exactly?
@@ -508,6 +518,7 @@ This grants openclaw:
 ### 6.1 Deterministic Rules (src/classification/rules.ts)
 
 Implement all rules from CLASSIFICATION.md:
+
 - Known sender patterns (GitHub, Linear, Stripe, etc.)
 - Subject patterns (verification codes, shipping, invoices, etc.)
 - Header patterns (List-Unsubscribe, bulk mailer headers)
@@ -517,6 +528,7 @@ Each rule returns one or more labels. Rules are evaluated in priority order.
 ### 6.2 LLM Classification (src/classification/llm.ts)
 
 For emails that don't match deterministic rules:
+
 - Send `from`, `subject`, first 200 chars of snippet to Claude Haiku
 - Parse JSON array of categories
 - Fallback to `sma/class/unknown` on LLM failure
@@ -540,6 +552,7 @@ Initialize pg-workflows with pg-boss connection. Register all workflows.
 ### 7.2 Classification Onboarding (src/workflows/classification-onboarding.ts)
 
 As specced in CLASSIFICATION.md:
+
 - Paginate through inbox
 - Checkpoint after each page (pg-workflows step)
 - Skip already-classified messages
@@ -548,6 +561,7 @@ As specced in CLASSIFICATION.md:
 ### 7.3 Classification Incremental (src/workflows/classification-incremental.ts)
 
 Triggered by Gmail push notifications:
+
 - Fetch single message
 - Classify (deterministic → LLM fallback)
 - Apply label
@@ -561,6 +575,7 @@ Triggered by Gmail push notifications:
 ### 7.5 Expiry Sweep (src/workflows/expiry-sweep.ts)
 
 Runs every minute:
+
 - Disable expired policies (`expires_at < now`)
 - Clean up ended sessions
 - Delete consumed one-time grants
@@ -574,6 +589,7 @@ Runs every minute:
 ### 8.1 MCP Server (src/mcp/server.ts)
 
 Using `@modelcontextprotocol/sdk`:
+
 - Expose 6 tools: `search_emails`, `read_email`, `draft_email`, `archive_email`, `trash_email`, `list_labels`
 - Extract agent key from Authorization header
 - Forward every call to API server with service secret
@@ -592,6 +608,7 @@ Define input/output schemas per the ARCHITECTURE.md MCP tools table.
 ### 9.1 Approval Broker (src/approval/broker.ts)
 
 Interface:
+
 ```typescript
 interface ApprovalBroker {
   sendApprovalRequest(request: ApprovalRequest): Promise<void>;
@@ -604,6 +621,7 @@ Dispatches to the configured channel per agent.
 ### 9.2 Stub Approval (src/approval/stub.ts)
 
 For development:
+
 - Logs the approval request to console
 - Exposes a local HTTP endpoint to submit approval responses
 - Auto-approve mode for testing
@@ -625,6 +643,7 @@ Deferred to post-stub phase. Skeleton with interface compliance.
 ### 10.1 SKILL.md (packages/skill/SKILL.md)
 
 Document:
+
 - MCP server URL and authentication
 - Available tools and their schemas
 - CLI alternative with `--agent-key`
@@ -674,10 +693,10 @@ Phases 5 and 6 can be developed in parallel since they have no dependencies on e
 
 ## Risk Register
 
-| Risk | Mitigation |
-|---|---|
-| cedar-wasm ESM issue with Bun | Phase 0.6 spike. Fallback: tempire/cedar-wasm-js fork |
-| pg-workflows API changes (v0.2.0) | Pin version, vendor if needed |
-| Clerk Gmail token retrieval complexity | Spike in Phase 4 before building Gmail routes |
-| LLM classification costs at scale | Deterministic rules handle majority; LLM is fallback only |
-| Gmail API rate limits during onboarding | Pagination with backoff, checkpoint per page |
+| Risk                                    | Mitigation                                                |
+| --------------------------------------- | --------------------------------------------------------- |
+| cedar-wasm ESM issue with Bun           | Phase 0.6 spike. Fallback: tempire/cedar-wasm-js fork     |
+| pg-workflows API changes (v0.2.0)       | Pin version, vendor if needed                             |
+| Clerk Gmail token retrieval complexity  | Spike in Phase 4 before building Gmail routes             |
+| LLM classification costs at scale       | Deterministic rules handle majority; LLM is fallback only |
+| Gmail API rate limits during onboarding | Pagination with backoff, checkpoint per page              |

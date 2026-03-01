@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "ralph-plan": {
+      "source": "mastra-ai/mastra",
+      "sourceType": "github",
+      "computedHash": "80c89889b37489ec4c85ade4c3d0427a20bdb1401ff5ab582aaa084a49286e63"
+    }
+  }
+}

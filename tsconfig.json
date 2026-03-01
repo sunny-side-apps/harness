@@ -24,6 +24,24 @@
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false
+    "noPropertyAccessFromIndexSignature": false,
+
+    // Path aliases
+    "baseUrl": ".",
+    "paths": {
+      "@api/*": ["src/api/*"],
+      "@compiler/*": ["src/compiler/*"],
+      "@runtime/*": ["src/runtime/*"],
+      "@classification/*": ["src/classification/*"],
+      "@nl/*": ["src/nl/*"],
+      "@timebox/*": ["src/timebox/*"],
+      "@approval/*": ["src/approval/*"],
+      "@workflows/*": ["src/workflows/*"],
+      "@db/*": ["src/db/*"],
+      "@config/*": ["src/config/*"],
+      "@shared/*": ["src/shared/*"],
+      "@mcp/*": ["src/mcp/*"],
+      "@cli/*": ["src/cli/*"]
+    }
   }
 }
