@@ -10,9 +10,7 @@ Save My Ass is a cloud-hosted policy enforcement layer that gives AI agents fine
 
 **How agents discover it:** Save My Ass ships as an **AgentSkill** — a SKILL.md distributed via agentskills.io that tells any compatible agent (Claude Code, OpenClaw, Cursor, OpenHands, etc.) how to connect to the MCP server. The AgentSkill is the distribution mechanism; the MCP server is the enforcement point.
 
-**How users manage it:** 
-    1. Via a dedicated web interface with standard auth powered by Clerk.com (for most users).
-    2. Via a CLI tool using an API key (issued on the web interface) - that is for tech-savvy users who want to provide the CLI to their personal agent of choice (e.g. Claude) and manage the service through that.
+**How users manage it:** 1. Via a dedicated web interface with standard auth powered by Clerk.com (for most users). 2. Via a CLI tool using an API key (issued on the web interface) - that is for tech-savvy users who want to provide the CLI to their personal agent of choice (e.g. Claude) and manage the service through that.
 
 **Stack:** TypeScript + Bun + Hono, PostgreSQL, Fly.io, Clerk (auth + Google OAuth).
 
@@ -32,20 +30,21 @@ Authenticates agents via `Authorization: Bearer sma_{key}` header on every reque
 
 **MCP tools exposed:**
 
-| Tool | Input | Output |
-|---|---|---|
-| `search_emails` | `{ query: string, limit?: number (1–100), pageToken?: string }` | `{ messages: GmailMessage[], nextPageToken?: string }` |
-| `read_email` | `{ id: string }` | `{ message: GmailMessage }` |
-| `draft_email` | `{ to: string[], subject: string, body: string, cc?: string[], replyTo?: string }` | `{ draftId: string, status: 'created' \| 'pending_approval' }` |
-| `archive_email` | `{ id: string }` | `{ status: 'executed' \| 'pending_approval' }` |
-| `trash_email` | `{ id: string }` | `{ status: 'executed' \| 'pending_approval' }` |
-| `list_labels` | — | `{ labels: string[] }` — only labels on accessible emails |
+| Tool            | Input                                                                              | Output                                                         |
+| --------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `search_emails` | `{ query: string, limit?: number (1–100), pageToken?: string }`                    | `{ messages: GmailMessage[], nextPageToken?: string }`         |
+| `read_email`    | `{ id: string }`                                                                   | `{ message: GmailMessage }`                                    |
+| `draft_email`   | `{ to: string[], subject: string, body: string, cc?: string[], replyTo?: string }` | `{ draftId: string, status: 'created' \| 'pending_approval' }` |
+| `archive_email` | `{ id: string }`                                                                   | `{ status: 'executed' \| 'pending_approval' }`                 |
+| `trash_email`   | `{ id: string }`                                                                   | `{ status: 'executed' \| 'pending_approval' }`                 |
+| `list_labels`   | —                                                                                  | `{ labels: string[] }` — only labels on accessible emails      |
 
 ### 3. Workflow Engine
 
 All background jobs run through **pg-workflows** — a PostgreSQL-backed workflow orchestration library that provides durable execution, exactly-once step semantics, automatic retries with exponential backoff, and built-in checkpointing. No external queue infrastructure required — PostgreSQL is the only dependency.
 
 **Workflows:**
+
 - `classification-onboarding` — batch classifies the user's inbox on signup; checkpoints after each page so it resumes safely after crashes
 - `classification-incremental` — triggered per new email via Gmail push notification
 - `hil-approval` — pauses on `step.waitFor('approval-response')` until the user responds via Slack/Telegram, then executes or cancels the action; times out after 10 minutes
@@ -79,6 +78,7 @@ React app. Read-only view of active policies, registered agents, and audit log. 
 Dual-purpose tool: Full CLI Gmail client for humans and agents, with every command routed through the policy engine via the API server. The UX is identical to https://github.com/steipete/gogcli but with a safety net.
 
 **Email operations:**
+
 ```bash
 sma gmail search "is:unread newer_than:7d"
 sma gmail read <id>
@@ -93,6 +93,7 @@ sma gmail watch                          # server-push via Pub/Sub
 ```
 
 **Other Workspace services (post-MVP):**
+
 ```bash
 sma calendar events / create / rsvp
 sma drive ls / download / upload
@@ -101,6 +102,7 @@ sma tasks list / complete
 ```
 
 **Policy and agent management:**
+
 ```bash
 sma policy add "let openclaw read team emails for 2h"
 sma policy list / show / disable / remove
@@ -206,12 +208,14 @@ sma agent register "openclaw"
 On every request, the API server hashes the key and looks it up in PostgreSQL. If the key does not exist, is revoked, or the account is inactive — deny immediately, before any policy evaluation.
 
 **Key security:**
+
 - Generated with `crypto.randomBytes(32)`, base64url-encoded
 - Transmitted only in the `Authorization` header (excluded from standard access logs)
 - Stored as a SHA-256 hash in PostgreSQL — the raw key is shown once at registration and never stored
 - Revocation is immediate: `sma agent revoke "openclaw"` marks the key revoked in PostgreSQL; all subsequent requests are denied within one request cycle
 
 **Gmail OAuth tokens:**
+
 - Fetched fresh from Clerk on every request — never cached in application memory
 - Used within the request scope only — eligible for garbage collection immediately after the Gmail API call completes
 - Never written to logs, audit entries, or any persistent storage
@@ -226,20 +230,20 @@ On user onboarding, Save My Ass runs a classification job across the inbox and a
 
 ### Classification taxonomy (`sma/class/...`)
 
-| Label | Description |
-|---|---|
-| `sma/class/auth` | Password resets, login codes, 2FA, security alerts |
-| `sma/class/alert` | System alerts, monitoring, error notifications |
-| `sma/class/notification` | App notifications, mentions, activity updates |
-| `sma/class/comment` | Code review comments, document comments, PR reviews |
-| `sma/class/subscription` | Subscription confirmations, renewal reminders |
-| `sma/class/marketing` | Promotional emails, newsletters, offers |
-| `sma/class/receipt` | Invoices, purchase confirmations, billing |
-| `sma/class/calendar` | Meeting invites, calendar updates, RSVPs |
-| `sma/class/personal` | Emails from friends and family |
-| `sma/class/work` | Emails from colleagues and work contacts |
-| `sma/class/finance` | Bank statements, financial notifications |
-| `sma/class/shipping` | Order tracking, delivery updates |
+| Label                    | Description                                         |
+| ------------------------ | --------------------------------------------------- |
+| `sma/class/auth`         | Password resets, login codes, 2FA, security alerts  |
+| `sma/class/alert`        | System alerts, monitoring, error notifications      |
+| `sma/class/notification` | App notifications, mentions, activity updates       |
+| `sma/class/comment`      | Code review comments, document comments, PR reviews |
+| `sma/class/subscription` | Subscription confirmations, renewal reminders       |
+| `sma/class/marketing`    | Promotional emails, newsletters, offers             |
+| `sma/class/receipt`      | Invoices, purchase confirmations, billing           |
+| `sma/class/calendar`     | Meeting invites, calendar updates, RSVPs            |
+| `sma/class/personal`     | Emails from friends and family                      |
+| `sma/class/work`         | Emails from colleagues and work contacts            |
+| `sma/class/finance`      | Bank statements, financial notifications            |
+| `sma/class/shipping`     | Order tracking, delivery updates                    |
 
 ### How classification works
 
@@ -266,6 +270,7 @@ allow "research-bot" to [read] on gmail.messages where { labels contains "sma/cl
 Transforms user intent into Cedar policies. Runs when a policy is created via `sma policy add`.
 
 **Phases:**
+
 1. **NL Translation** — LLM converts natural language to AgentGate DSL. Ambiguous input triggers clarifying questions. Result shown to user for confirmation before proceeding.
 2. **Parse** — DSL source → AST
 3. **Resolve** — Links references to known Gmail resource model (messages, operations, attributes). Unknown references are a compile-time error.
@@ -281,6 +286,7 @@ If any phase fails, the active policy set is untouched.
 Cedar-based evaluation embedded in the API server. Loaded per agent request. Default-deny: if no rule matches, the action is blocked. Policy set updates are atomic — in-flight requests finish with the old set, the next request uses the new one.
 
 **Failure modes:**
+
 - Cedar evaluation throws → fail closed: deny the request, log the full error with context, alert on-call
 - Policy set fails to load from PostgreSQL → fail closed: deny all requests, serve 503
 - Corrupted policy detected on load → keep the previous valid policy set in memory; do not swap until a new valid set is available
@@ -377,6 +383,7 @@ All services run on Fly.io. The API server contains all business logic — the M
 **Service-to-service authentication:** The MCP server authenticates to the API server via a shared `mcp-service-secret` in the `Authorization` header of every internal request. The API server rejects any request not bearing this secret, regardless of agent key validity.
 
 **CLI distribution:** `sma` is distributed as a standalone binary compiled with Bun. Users authenticate once:
+
 ```bash
 sma auth login    # opens browser → Clerk → saves session token locally
 ```
@@ -385,22 +392,23 @@ sma auth login    # opens browser → Clerk → saves session token locally
 
 **Failure modes:**
 
-| Component failure | Behavior |
-|---|---|
-| PostgreSQL unavailable | Fail closed — deny all requests, return 503 |
-| Clerk unavailable | Fail closed — deny all requests, return 503 |
-| Clerk token revoked | Deny request, return 401 |
-| Cedar evaluation throws | Fail closed — deny request, log error, alert |
-| Gmail API unavailable | Return 503 to agent — do not retry automatically |
-| Gmail API rate limit (429) | Return 429 with Retry-After to agent |
-| Approval channel unavailable | Retry 3× over 5 min — if all fail, block action with error |
-| Classification LLM unavailable | Label as `sma/class/unknown`, retry in background |
+| Component failure              | Behavior                                                   |
+| ------------------------------ | ---------------------------------------------------------- |
+| PostgreSQL unavailable         | Fail closed — deny all requests, return 503                |
+| Clerk unavailable              | Fail closed — deny all requests, return 503                |
+| Clerk token revoked            | Deny request, return 401                                   |
+| Cedar evaluation throws        | Fail closed — deny request, log error, alert               |
+| Gmail API unavailable          | Return 503 to agent — do not retry automatically           |
+| Gmail API rate limit (429)     | Return 429 with Retry-After to agent                       |
+| Approval channel unavailable   | Retry 3× over 5 min — if all fail, block action with error |
+| Classification LLM unavailable | Label as `sma/class/unknown`, retry in background          |
 
 ---
 
 ## MVP Scope
 
 **Included:**
+
 - User signup via Clerk + Google OAuth
 - Inbox classification on onboarding + incremental via push notifications
 - Agent registration + key generation (`sma_{key}`)
@@ -418,6 +426,7 @@ sma auth login    # opens browser → Clerk → saves session token locally
 - Read-only React dashboard (policies, agents, audit log)
 
 **Excluded from MVP:**
+
 - Outlook / IMAP support
 - Automatic send without approval
 - Delegation chains (multi-agent orchestration)
@@ -425,6 +434,7 @@ sma auth login    # opens browser → Clerk → saves session token locally
 - Multi-account support
 
 **Coming soon:**
+
 - **Cross-service flow rules** — when an agent reads sensitive data from one service, block it from leaking to another (e.g. reading medical emails taints the session and blocks posting to Slack or GitHub). Requires a second service integration to be meaningful.
 
 ---
@@ -487,7 +497,7 @@ savemyass/
 │   └── skill/
 │       └── SKILL.md                  # AgentSkill definition
 └── bin/
-    └── sma.ts                        # CLI entry point
+    └── main.ts                        # CLI entry point
 ```
 
 ### Key Dependencies
