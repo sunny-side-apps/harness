@@ -4,9 +4,36 @@
   "type": "module",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/luxon": "^3.7.1",
+    "@types/pg": "^8.18.0",
+    "drizzle-kit": "^0.31.9"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "scripts": {
+    "dev:api": "bun run --watch src/api/server.ts",
+    "dev:mcp": "bun run --watch src/mcp/server.ts",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage",
+    "typecheck": "bunx tsc --noEmit",
+    "db:generate": "bunx drizzle-kit generate",
+    "db:migrate": "bunx drizzle-kit migrate",
+    "db:studio": "bunx drizzle-kit studio"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@cedar-policy/cedar-wasm": "^4.9.1",
+    "@clerk/backend": "^2.33.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "commander": "^14.0.3",
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.12.3",
+    "luxon": "^3.7.2",
+    "pg": "^8.19.0",
+    "pg-boss": "^12.14.0",
+    "pg-workflows": "^0.2.0",
+    "zod": "^4.3.6"
   }
 }
