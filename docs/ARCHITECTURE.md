@@ -38,6 +38,7 @@ Authenticates agents via `Authorization: Bearer sma_{key}` header on every reque
 | `archive_email` | `{ id: string }`                                                                   | `{ status: 'executed' \| 'pending_approval' }`                 |
 | `trash_email`   | `{ id: string }`                                                                   | `{ status: 'executed' \| 'pending_approval' }`                 |
 | `list_labels`   | —                                                                                  | `{ labels: string[] }` — only labels on accessible emails      |
+| `triage_inbox`  | —                                                                                  | `{ summary: string }` (Show unread inbox summary (sender, subject, date))
 
 ### 3. Workflow Engine
 
