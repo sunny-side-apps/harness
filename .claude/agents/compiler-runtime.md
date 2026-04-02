@@ -200,6 +200,17 @@ Build the Hono HTTP server with all routes and middleware.
 
 **Internal routes** (for MCP server): same logic but behind service-secret auth at `/internal/gmail/*`.
 
+## Critical: Cedar WASM Import Path
+
+**ALWAYS import from `@cedar-policy/cedar-wasm/nodejs`** — NOT from the bare `@cedar-policy/cedar-wasm`.
+The ESM entry point fails in Bun (WASM init issue). The `/nodejs` subpath works perfectly.
+
+```typescript
+import { isAuthorized, validate, checkParsePolicySet } from "@cedar-policy/cedar-wasm/nodejs";
+```
+
+See `src/runtime/__tests__/cedar-spike.test.ts` for a working reference with the full AgentGate schema.
+
 ## Conventions
 
 - Import shared types from `src/shared/types.ts`
