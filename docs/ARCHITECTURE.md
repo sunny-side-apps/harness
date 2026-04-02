@@ -72,7 +72,7 @@ If any phase fails, the policy is rejected and the active set is untouched.
 
 ### 5. Dashboard (`app.savemyass.com`)
 
-React app. Read-only view of active policies, registered agents, and audit log. No policy management — that is the CLI's job.
+React app. Editable view of active policies, registered agents, and audit log. Users are able to adjust their preferences in a similar manner with what they can do through the CLI.
 
 ### 6. CLI (`sma`)
 
