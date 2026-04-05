@@ -406,6 +406,50 @@ sma auth login    # opens browser → Clerk → saves session token locally
 
 ---
 
+## Logging
+
+All services (API server, MCP adapter, CLI, workflow workers) use **Pino** as the structured logger. Logs are emitted as JSON in production and are shaped for direct ingestion into Datadog.
+
+### Logger baseline
+
+- **Library:** `pino`
+- **Development output:** `pino-pretty` for local readability only
+- **Production output:** raw JSON only (no pretty transport)
+- **Context propagation:** `@blueground/async-mdc` for mapped diagnostic context (MDC) across async boundaries
+
+### Environment behavior
+
+- **Development (`NODE_ENV=development`)**: enable `pino-pretty`
+- **Test/CI**: keep machine-readable JSON output
+- **Production**: keep JSON output and rely on Datadog pipelines/facets
+
+### MDC and correlation strategy
+
+Each request/workflow seeds MDC once and every log line automatically includes active context:
+
+- `http.request_id` (or equivalent request ID)
+- `agent_id`, `user_id`, `policy_id`, `workflow_run_id` when available
+- `correlation_id` when tracing correlation is available
+
+This removes manual context threading and keeps logs joinable across API, MCP, workflow, and approval flows.
+
+### Standard log bindings (Datadog-first)
+
+Default logger bindings and event fields should follow Datadog standard attributes as the canonical naming model.
+
+Minimum common bindings:
+
+- `service`, `env`, `version`, `host`
+- `status` (mirrors log severity)
+- `message`
+- `trace_id` (when available)
+- `http.request_id` for request correlation
+- `duration` in **nanoseconds** for latency fields
+
+Domain-specific fields should prefer Datadog standard names where applicable (`http.*`, `network.*`, `db.*`, `error.*`, `usr.*`, etc.) to minimize custom remapping in log pipelines.
+
+---
+
 ## MVP Scope
 
 **Included:**
@@ -498,7 +542,7 @@ savemyass/
 │   └── skill/
 │       └── SKILL.md                  # AgentSkill definition
 └── bin/
-    └── main.ts                        # CLI entry point
+     w└── main.ts                        # CLI entry point
 ```
 
 ### Key Dependencies
